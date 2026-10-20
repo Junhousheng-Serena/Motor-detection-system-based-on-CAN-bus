@@ -25,14 +25,21 @@ static volatile uint32_t rxDropped;
 static volatile uint32_t txFailed;
 static TickType_t lastHeartbeat;
 static uint8_t heartbeatSeen;
-static uint8_t reportSequence;
+static TickType_t lastCommand;
+static uint8_t commandSeen, commandSequence, heartbeatSequence;
+static uint8_t faultCaptured, faultCopies;
+static CanFaultEvent pendingFault;
+static TickType_t previousFault;
 
 _Static_assert(MOTOR_WAITING_SENSORS == 0 && MOTOR_READY == 1 &&
                MOTOR_OVERHEAT_LATCHED == 2 && MOTOR_SENSOR_FAULT_LATCHED == 3 &&
-               MOTOR_OVERCURRENT_LATCHED == 4, "Update the CAN wire state mapping");
+               MOTOR_OVERCURRENT_LATCHED == 4 && MOTOR_COMM_FAULT_LATCHED == 5, "Update the CAN wire state mapping");
+_Static_assert(CAN_CURRENT_LIMIT_MAX_MA == MOTOR_OVERCURRENT_STOP_MA,
+               "Protocol and motor current limits must agree");
 
 HAL_StatusTypeDef Can_Init(void)
 {
+    Motor_RequireRemoteControl();
     if (receiveQueue == NULL)
     {
         receiveQueue = xQueueCreateStatic(CAN_RX_QUEUE_LENGTH, sizeof(CanRxFrame),
@@ -87,7 +94,7 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *handle)
         if (header.IDE != CAN_ID_STD || header.RTR != CAN_RTR_DATA ||
             header.DLC != CAN_PROTOCOL_LENGTH) continue;
         frame.id = (uint16_t)header.StdId;
-        if (frame.id != CAN_ID_HOST_HEARTBEAT) continue;
+        if (frame.id != CAN_ID_HOST_HEARTBEAT && frame.id != CAN_ID_MOTOR_COMMAND) continue;
         frame.receivedAt = xTaskGetTickCountFromISR();
         if (receiveQueue == NULL ||
             xQueueSendFromISR(receiveQueue, &frame, &taskWoken) != pdPASS)
@@ -106,6 +113,10 @@ void Can_GetDiagnostics(CanDiagnostics *diagnostics)
     diagnostics->txFailed = txFailed;
     diagnostics->peerOnline = heartbeatSeen &&
         (TickType_t)(xTaskGetTickCount() - lastHeartbeat) < pdMS_TO_TICKS(CAN_PEER_TIMEOUT_MS);
+    diagnostics->commandSeen = commandSeen;
+    diagnostics->commandFresh = commandSeen &&
+        (TickType_t)(xTaskGetTickCount() - lastCommand) < pdMS_TO_TICKS(CAN_COMMAND_TIMEOUT_MS);
+    diagnostics->commandSequence = commandSequence;
     __set_PRIMASK(irqState);
 }
 
@@ -128,69 +139,135 @@ static int16_t Can_TemperatureValue(float value)
 
 static void Can_Report(void)
 {
-    CanMeasurements sample = {0};
-    CanMotorStatus status = {0};
+    CanTelemetry sample = {0};
     CanDiagnostics diagnostics;
-    /* Capture temperature, current and PWM state from one complete batch. */
     uint32_t irqState = __get_PRIMASK();
     __disable_irq();
     float temperature = ntc_res;
     float current = current_res_ma;
-    float peak = current_peak_ma;
-    float voltage = voltage_res;
-    sample.protection = (uint8_t)Motor_GetProtectionState();
-    status.appliedDuty = Motor_GetAppliedDuty();
-    status.requestedDuty = Motor_GetRequestedDuty();
+    sample.status = (uint8_t)Motor_GetProtectionState();
+    sample.appliedDuty = Motor_GetAppliedDuty();
+    if (Motor_GetRemoteEnabled()) sample.status |= CAN_STATUS_ENABLED;
     Can_GetDiagnostics(&diagnostics);
+    sample.commandSequence = commandSequence;
     __set_PRIMASK(irqState);
-
-    sample.sequence = status.sequence = reportSequence++;
+    if (diagnostics.commandSeen) sample.status |= CAN_STATUS_COMMAND_SEEN;
+    if (diagnostics.commandFresh) sample.status |= CAN_STATUS_COMMAND_FRESH;
+    if (diagnostics.peerOnline) sample.status |= CAN_STATUS_HOST_ONLINE;
     sample.temperatureDeciC = Can_TemperatureValue(temperature);
     sample.currentDeciMa = Can_UnsignedValue(current, 10.0f);
-    sample.peakDeciMa = Can_UnsignedValue(peak, 10.0f);
-    status.voltageMv = Can_UnsignedValue(voltage, 1000.0f);
-    status.linkFlags = (diagnostics.peerOnline ? CAN_LINK_HOST_ONLINE : 0U) |
-                      (diagnostics.rxDropped ? CAN_LINK_RX_DROPPED : 0U) |
-                      (diagnostics.txFailed ? CAN_LINK_TX_FAILED : 0U);
+    uint8_t payload[8];
+    CanProtocol_EncodeTelemetry(&sample, payload);
+    if (Can_Send(CAN_ID_MOTOR_TELEMETRY, payload, 8U) != HAL_OK) txFailed++;
+}
 
-    uint8_t measurements[8], motorStatus[8];
-    CanProtocol_EncodeMeasurements(&sample, measurements);
-    CanProtocol_EncodeStatus(&status, motorStatus);
-    /* Do not spin if the bus is unavailable; the next period sends fresh data. */
-    if (Can_Send(CAN_ID_MOTOR_MEASUREMENTS, measurements, 8U) != HAL_OK) txFailed++;
-    if (Can_Send(CAN_ID_MOTOR_STATUS, motorStatus, 8U) != HAL_OK) txFailed++;
+static void Can_SendHeartbeat(TickType_t now)
+{
+    CanHeartbeat heartbeat = {.sequence = heartbeatSequence++,
+        .state = (uint8_t)Motor_GetProtectionState(),
+        .uptimeSeconds = now / pdMS_TO_TICKS(1000)};
+    heartbeat.flags = (rxDropped ? CAN_HEARTBEAT_RX_DROPPED : 0U) |
+                      (txFailed ? CAN_HEARTBEAT_TX_FAILED : 0U) |
+                      (commandSeen ? CAN_HEARTBEAT_COMMAND_SEEN : 0U) |
+                      (Motor_GetRemoteEnabled() ? CAN_HEARTBEAT_ENABLED : 0U);
+    uint8_t payload[8];
+    CanProtocol_EncodeHeartbeat(&heartbeat, payload);
+    if (Can_Send(CAN_ID_MOTOR_HEARTBEAT, payload, 8U) != HAL_OK) txFailed++;
+}
+
+static void Can_ReportFault(TickType_t now)
+{
+    MotorFaultSnapshot fault;
+    Motor_GetFaultSnapshot(&fault);
+    if (!faultCaptured && fault.state >= MOTOR_OVERHEAT_LATCHED)
+    {
+        static const uint8_t codes[] = {0, 0, CAN_FAULT_OVERHEAT, CAN_FAULT_SENSOR,
+            CAN_FAULT_OVERCURRENT, CAN_FAULT_COMMUNICATION};
+        pendingFault = (CanFaultEvent){.sequence = 0, .code = codes[fault.state],
+            .commandSequence = commandSequence,
+            .peakDeciMa = Can_UnsignedValue(fault.currentPeakMa, 10.0f),
+            .temperatureDeciC = Can_TemperatureValue(fault.temperatureC)};
+        faultCaptured = 1U;
+        faultCopies = 3U;
+        previousFault = now - pdMS_TO_TICKS(CAN_TELEMETRY_PERIOD_MS);
+    }
+    if (faultCopies && (TickType_t)(now - previousFault) >= pdMS_TO_TICKS(CAN_TELEMETRY_PERIOD_MS))
+    {
+        uint8_t payload[8];
+        CanProtocol_EncodeFault(&pendingFault, payload);
+        previousFault = now;
+        if (Can_Send(CAN_ID_MOTOR_FAULT, payload, 8U) == HAL_OK) faultCopies--;
+        else txFailed++; /* Keep pending if no mailbox was available. */
+    }
+}
+
+static void Can_ProcessFrame(const CanRxFrame *frame, TickType_t now)
+{
+    if (frame->id == CAN_ID_HOST_HEARTBEAT)
+    {
+        CanHeartbeat heartbeat;
+        if (CanProtocol_DecodeHeartbeat(frame->data, &heartbeat) &&
+            heartbeat.state == 0U && heartbeat.flags == 0U &&
+            (TickType_t)(now - frame->receivedAt) < pdMS_TO_TICKS(CAN_PEER_TIMEOUT_MS))
+        {
+            lastHeartbeat = frame->receivedAt;
+            heartbeatSeen = 1U;
+        }
+        return;
+    }
+    CanMotorCommand command;
+    if (!CanProtocol_DecodeCommand(frame->data, &command) ||
+        (TickType_t)(now - frame->receivedAt) >= pdMS_TO_TICKS(CAN_COMMAND_TIMEOUT_MS)) return;
+    /* A well-formed disable always stops, even if its sequence is duplicated.
+     * It does not renew the watchdog unless it is a new accepted command. */
+    if (!command.enable) Motor_Stop();
+    if (!heartbeatSeen ||
+        (TickType_t)(now - lastHeartbeat) >= pdMS_TO_TICKS(CAN_PEER_TIMEOUT_MS) ||
+        (commandSeen && !CanProtocol_SequenceNewer(command.sequence, commandSequence))) return;
+    commandSequence = command.sequence;
+    commandSeen = 1U;
+    lastCommand = frame->receivedAt;
+    (void)Motor_ApplyRemoteCommand(command.enable, command.dutyPercent, command.currentLimitMa);
 }
 
 void Can_ReceiveTask(void *argument)
 {
     (void)argument;
-    /* The queue and scheduler are ready before an ISR can call FreeRTOS. */
     if (receiveQueue == NULL || HAL_CAN_Start(&hcan) != HAL_OK ||
         HAL_CAN_ActivateNotification(&hcan, CAN_IT_RX_FIFO0_MSG_PENDING) != HAL_OK)
     {
-        Motor_Stop();
+        Motor_LatchCommunicationFault();
         vTaskDelete(NULL);
         return;
     }
-
-    TickType_t previousReport = xTaskGetTickCount() - pdMS_TO_TICKS(CAN_TELEMETRY_PERIOD_MS);
+    TickType_t startedAt = xTaskGetTickCount();
+    TickType_t previousReport = startedAt - pdMS_TO_TICKS(CAN_TELEMETRY_PERIOD_MS);
+    TickType_t previousHeartbeat = startedAt - pdMS_TO_TICKS(CAN_HEARTBEAT_PERIOD_MS);
     for (;;)
     {
+        TickType_t now = xTaskGetTickCount();
+        /* Check before consuming queued frames: a real gap must stay latched. */
+        if ((commandSeen && (TickType_t)(now - lastCommand) >= pdMS_TO_TICKS(CAN_COMMAND_TIMEOUT_MS)) ||
+            (heartbeatSeen && (TickType_t)(now - lastHeartbeat) >= pdMS_TO_TICKS(CAN_PEER_TIMEOUT_MS)) ||
+            (!commandSeen && (TickType_t)(now - startedAt) >= pdMS_TO_TICKS(CAN_STARTUP_TIMEOUT_MS)))
+            Motor_LatchCommunicationFault();
         CanRxFrame frame;
         for (unsigned i = 0; i < CAN_RX_QUEUE_LENGTH; i++)
         {
             if (xQueueReceive(receiveQueue, &frame, 0) != pdPASS) break;
-            if (frame.id == CAN_ID_HOST_HEARTBEAT && CanProtocol_IsHeartbeat(frame.data))
-            {
-                lastHeartbeat = frame.receivedAt;
-                heartbeatSeen = 1U;
-            }
+            Can_ProcessFrame(&frame, xTaskGetTickCount());
         }
-        TickType_t now = xTaskGetTickCount();
+        now = xTaskGetTickCount();
+        Can_ReportFault(now);
         if ((TickType_t)(now - previousReport) >= pdMS_TO_TICKS(CAN_TELEMETRY_PERIOD_MS))
         {
             previousReport = now;
             Can_Report();
+        }
+        if ((TickType_t)(now - previousHeartbeat) >= pdMS_TO_TICKS(CAN_HEARTBEAT_PERIOD_MS))
+        {
+            previousHeartbeat = now;
+            Can_SendHeartbeat(now);
         }
         vTaskDelay(pdMS_TO_TICKS(CAN_TASK_PERIOD_MS));
     }

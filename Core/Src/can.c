@@ -54,7 +54,7 @@ void MX_CAN_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN CAN_Init 2 */
-  // 只接收上位机心跳的标准数据帧。
+  // 分别接收管理节点心跳和电机控制命令。
   CAN_FilterTypeDef filter;
   filter.FilterBank = 0;              // 过滤器组0
   filter.FilterMode = CAN_FILTERMODE_IDMASK; // 掩码模式
@@ -66,6 +66,12 @@ void MX_CAN_Init(void)
   filter.FilterFIFOAssignment = CAN_RX_FIFO0; // 接收FIFO0
   filter.FilterActivation = ENABLE;   // 使能过滤器
   filter.SlaveStartFilterBank = 14;   // 单CAN控制器，无需从机
+  if (HAL_CAN_ConfigFilter(&hcan, &filter) != HAL_OK) {
+    Error_Handler();
+  }
+
+  filter.FilterBank = 1;
+  filter.FilterIdHigh = CAN_ID_MOTOR_COMMAND << 5;
   if (HAL_CAN_ConfigFilter(&hcan, &filter) != HAL_OK) {
     Error_Handler();
   }

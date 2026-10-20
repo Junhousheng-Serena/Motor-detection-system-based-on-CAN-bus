@@ -35,10 +35,14 @@ cmake --build --preset Debug
 
 若尚未配置 CMake，先执行 `cmake --preset Debug`。
 若工程搬迁后缓存仍指向旧目录，执行 `cmake --fresh --preset Debug` 重新生成构建缓存。
-本次不包含远程电机控制；H743 每 500 ms 发心跳、解析 F103 上报，
-每 500 ms 在串口显示最近一组完整数据或离线状态。
+H743 每 500 ms 发心跳，每 50 ms 发控制命令，默认使能、50% 占空比、160 mA 过流停机阈值。
+`User/drv_can.h` 提供 `Can_SetMotorCommand(enable, dutyPercent, currentLimitMa)`，
+用于后续按键或上位机接入；支持正常停机、使能、占空比和阈值调节，不提供故障复位。
+没有编码器，不发送转速。每 500 ms 在串口显示测量值、状态、PWM、序号回显、心跳及最近故障。
+FDCAN 使用一个范围过滤器接收 0x301～0x3F1，ISR 再精确筛选 0x301、0x302、0x3F1。
+因此保留原工程 `StdFiltersNbr=1`，无需修改 CubeMX 的消息 RAM 配置。
 报文内容及验证方法见 [CAN_PROTOCOL.md](../docs/CAN_PROTOCOL.md)。
 
 2026-10-20 已在上述 H743 工程完成接入并通过 Debug 编译；
-F103 Debug 编译、15 项通信主机测试及 25 项温度/电流保护测试均通过。
+F103 Debug 编译、33 项通信主机测试及 25 项温度/电流保护测试均通过。
 尚未进行烧录或双板总线实测。

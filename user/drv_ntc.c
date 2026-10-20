@@ -171,6 +171,9 @@ static void vNtcReportTask(void *pvParameters)
         case MOTOR_OVERCURRENT_LATCHED:
             state = "OVERCURRENT_LATCHED";
             break;
+        case MOTOR_COMM_FAULT_LATCHED:
+            state = "COMM_FAULT_LATCHED";
+            break;
         default:
             state = "WAIT_SENSORS";
             break;

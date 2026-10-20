@@ -11,10 +11,13 @@ if compiler is None:
     raise SystemExit("A host gcc compiler is required.")
 
 targets = {
-    "f103": ["telemetry", "heartbeat", "timeout_wrap", "stale_queue",
-             "invalid_samples", "overflow", "bad_frames", "tx_busy"],
-    "h743": ["pair", "timeout_wrap", "mismatch", "stale_queue",
-             "bad_frames", "overflow", "tx_busy"],
+    "f103": ["boot_wait", "command_before_sensors", "remote_current_boundary",
+             "enable", "disable", "duplicate_disable", "sequence_wrap", "out_of_order",
+             "no_heartbeat", "startup_timeout", "command_timeout", "duplicates_timeout",
+             "heartbeat_timeout", "recovery_latched", "tick_wrap", "stale_queue", "bad_frames",
+             "lower_limit", "fault_snapshot", "fault_busy_retry", "invalid_samples", "overflow", "tx_busy"],
+    "h743": ["defaults_periods", "api", "receive", "tick_wrap", "no_heartbeat", "stale_queue",
+             "fault", "bad_frames", "overflow", "tx_busy"],
 }
 with tempfile.TemporaryDirectory(prefix="motor-can-test-") as output:
     for target, cases in targets.items():

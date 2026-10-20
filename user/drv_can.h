@@ -10,6 +10,7 @@ typedef struct
     uint32_t rxDropped;
     uint32_t txFailed;
     uint8_t peerOnline;
+    uint8_t commandSeen, commandFresh, commandSequence;
 } CanDiagnostics;
 
 /* Create the RX queue before the scheduler; CAN starts inside the task. */
