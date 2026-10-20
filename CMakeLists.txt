@@ -52,6 +52,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
     user/drv_motor.c
     user/drv_ntc.c
+    user/drv_current.c
     user/drv_can.c
 )
 

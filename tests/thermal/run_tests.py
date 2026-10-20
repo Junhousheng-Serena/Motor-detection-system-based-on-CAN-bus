@@ -15,6 +15,10 @@ cases = [
     "infinite_temperature", "manual_stop", "adc_overheat", "adc_open",
     "adc_short", "adc_timeout", "adc_start_error", "adc_stop_error",
     "adc_split_filter", "adc_voltage_endpoints", "adc_report",
+    "overcurrent", "overcurrent_boot", "invalid_current",
+    "infinite_current", "negative_current",
+    "current_conversion", "adc_overcurrent_boot", "adc_current_boundary",
+    "adc_current_spike", "adc_current_fault_report",
 ]
 with tempfile.TemporaryDirectory(prefix="f103-thermal-test-") as output:
     executable = Path(output) / "test_thermal.exe"
@@ -23,8 +27,9 @@ with tempfile.TemporaryDirectory(prefix="f103-thermal-test-") as output:
         "-I", str(test_dir / "stubs"), "-I", str(repo / "user"),
         str(test_dir / "test_thermal.c"),
         str(repo / "user/drv_motor.c"), str(repo / "user/drv_ntc.c"),
+        str(repo / "user/drv_current.c"),
         "-lm", "-o", str(executable),
     ], check=True)
     for case in cases:
         subprocess.run([str(executable), case], check=True)
-print(f"PASS: {len(cases)} thermal protection scenarios")
+print(f"PASS: {len(cases)} motor protection scenarios")

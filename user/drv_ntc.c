@@ -8,6 +8,12 @@
 #include <stdio.h>
 #include "drv_print.h"
 #include "drv_motor.h"
+#include "drv_current.h"
+
+_Static_assert(pdMS_TO_TICKS(NTC_SAMPLE_INTERVAL_MS) > 0U,
+               "Sampling interval must allow the task to block");
+_Static_assert(pdMS_TO_TICKS(NTC_SAMPLE_TIMEOUT_MS) > 0U,
+               "ADC timeout must be at least one RTOS tick");
 
 static TaskHandle_t ntcTaskHandle = NULL;
 uint16_t adc_buf[ADC_BUF_LEN];
@@ -15,11 +21,19 @@ uint16_t ntc_samples[ADC_SAMPLES_PER_CHANNEL];
 uint16_t voltage_samples[ADC_SAMPLES_PER_CHANNEL];
 volatile float ntc_res = NAN;
 volatile float voltage_res = NAN;
+volatile float current_res_ma = NAN;
+volatile float current_peak_ma = NAN;
 
 static void vNtcMonitorTask(void *pvParameters);
 static void vNtcReportTask(void *pvParameters);
 
 HAL_StatusTypeDef Ntc_Init(void) {
+    /* A threshold beyond ADC range could never trip after output saturation. */
+    if (MOTOR_OVERCURRENT_STOP_MA >=
+        Current_VoltageToMilliamps(ADC_REFERENCE_VOLTAGE))
+    {
+        return HAL_ERROR;
+    }
     HAL_StatusTypeDef status = HAL_ADCEx_Calibration_Start(&hadc1);
     if (status != HAL_OK)
     {
@@ -80,6 +94,8 @@ static void vNtcMonitorTask(void *pvParameters) {
     for (;;) {
         float temperature = NAN;
         float voltage = NAN;
+        float current = NAN;
+        float peakCurrent = NAN;
         /* Discard any old notification before arming a new one-shot batch. */
         (void)ulTaskNotifyTake(pdTRUE, 0);
         HAL_StatusTypeDef startStatus =
@@ -105,14 +121,22 @@ static void vNtcMonitorTask(void *pvParameters) {
                 (float)ntc_samples[ADC_SAMPLES_PER_CHANNEL / 2U]);
             voltage = (float)voltage_samples[ADC_SAMPLES_PER_CHANNEL / 2U] *
                       ADC_REFERENCE_VOLTAGE / ADC_FULL_SCALE;
+            current = Current_VoltageToMilliamps(voltage);
+            /* Check the largest sample so median filtering cannot hide a
+             * sampled overcurrent pulse at low PWM duty. */
+            float peakVoltage = (float)voltage_samples[ADC_SAMPLES_PER_CHANNEL - 1U] *
+                                ADC_REFERENCE_VOLTAGE / ADC_FULL_SCALE;
+            peakCurrent = Current_VoltageToMilliamps(peakVoltage);
         }
 
         /* Invalid data / DMA errors / timeout all latch the motor off. */
         uint32_t irqState = __get_PRIMASK();
         __disable_irq();
-        Motor_UpdateTemperature(temperature);
+        Motor_UpdateProtection(temperature, peakCurrent);
         ntc_res = temperature;
         voltage_res = voltage;
+        current_res_ma = current;
+        current_peak_ma = peakCurrent;
         __set_PRIMASK(irqState);
         vTaskDelay(pdMS_TO_TICKS(NTC_SAMPLE_INTERVAL_MS));
     }
@@ -128,12 +152,14 @@ static void vNtcReportTask(void *pvParameters)
         __disable_irq();
         float temperature = ntc_res;
         float voltage = voltage_res;
+        float current = current_res_ma;
+        float peakCurrent = current_peak_ma;
         MotorProtectionState protection = Motor_GetProtectionState();
         __set_PRIMASK(irqState);
         const char *state;
         switch (protection)
         {
-        case MOTOR_TEMPERATURE_READY:
+        case MOTOR_READY:
             state = "READY";
             break;
         case MOTOR_OVERHEAT_LATCHED:
@@ -142,12 +168,17 @@ static void vNtcReportTask(void *pvParameters)
         case MOTOR_SENSOR_FAULT_LATCHED:
             state = "SENSOR_FAULT_LATCHED";
             break;
+        case MOTOR_OVERCURRENT_LATCHED:
+            state = "OVERCURRENT_LATCHED";
+            break;
         default:
-            state = "WAIT_TEMP";
+            state = "WAIT_SENSORS";
             break;
         }
-        my_printf("ntc_res: %.1f C, voltage: %.3f V, motor: %s\r\n",
-                  (double)temperature, (double)voltage, state);
-        vTaskDelay(pdMS_TO_TICKS(NTC_SAMPLE_INTERVAL_MS));
+        my_printf("ntc_res: %.1f C, voltage: %.3f V, current: %.1f mA, "
+                  "peak: %.1f mA, motor: %s\r\n",
+                  (double)temperature, (double)voltage,
+                  (double)current, (double)peakCurrent, state);
+        vTaskDelay(pdMS_TO_TICKS(NTC_REPORT_INTERVAL_MS));
     }
 }

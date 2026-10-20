@@ -3,13 +3,13 @@
 #include <math.h>
 
 static uint32_t requestedDutyPercent = MOTOR_DEFAULT_DUTY_PERCENT;
-static volatile MotorProtectionState protectionState = MOTOR_WAITING_TEMPERATURE;
+static volatile MotorProtectionState protectionState = MOTOR_WAITING_SENSORS;
 static uint8_t motorInitialized;
 
 /* Caller protects the state and PWM update together from task preemption. */
 static void Motor_ApplyDuty(void)
 {
-  uint32_t duty = (protectionState == MOTOR_TEMPERATURE_READY) ?
+  uint32_t duty = (protectionState == MOTOR_READY) ?
                    requestedDutyPercent : 0U;
   uint32_t pulse = ((__HAL_TIM_GET_AUTORELOAD(&htim3) + 1U) * duty) / 100U;
 
@@ -51,7 +51,7 @@ HAL_StatusTypeDef Motor_SetForwardDuty(uint32_t dutyPercent)
   __disable_irq();
   requestedDutyPercent = dutyPercent;
   Motor_ApplyDuty();
-  HAL_StatusTypeDef status = (protectionState == MOTOR_TEMPERATURE_READY) ?
+  HAL_StatusTypeDef status = (protectionState == MOTOR_READY) ?
                               HAL_OK : HAL_BUSY;
   __set_PRIMASK(irqState);
   return status;
@@ -69,15 +69,16 @@ void Motor_Stop(void)
   __set_PRIMASK(irqState);
 }
 
-void Motor_UpdateTemperature(float temperatureC)
+void Motor_UpdateProtection(float temperatureC, float currentPeakMa)
 {
   uint32_t irqState = __get_PRIMASK();
   __disable_irq();
   if (motorInitialized &&
       protectionState != MOTOR_OVERHEAT_LATCHED &&
-      protectionState != MOTOR_SENSOR_FAULT_LATCHED)
+      protectionState != MOTOR_SENSOR_FAULT_LATCHED &&
+      protectionState != MOTOR_OVERCURRENT_LATCHED)
   {
-    if (!isfinite(temperatureC))
+    if (!isfinite(temperatureC) || !isfinite(currentPeakMa) || currentPeakMa < 0.0f)
     {
       protectionState = MOTOR_SENSOR_FAULT_LATCHED;
     }
@@ -85,10 +86,14 @@ void Motor_UpdateTemperature(float temperatureC)
     {
       protectionState = MOTOR_OVERHEAT_LATCHED;
     }
-    else if (protectionState == MOTOR_WAITING_TEMPERATURE &&
+    else if (currentPeakMa >= MOTOR_OVERCURRENT_STOP_MA)
+    {
+      protectionState = MOTOR_OVERCURRENT_LATCHED;
+    }
+    else if (protectionState == MOTOR_WAITING_SENSORS &&
              temperatureC < MOTOR_START_MAX_TEMP_C)
     {
-      protectionState = MOTOR_TEMPERATURE_READY;
+      protectionState = MOTOR_READY;
     }
     Motor_ApplyDuty();
   }
