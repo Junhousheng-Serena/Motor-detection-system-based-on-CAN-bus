@@ -1,0 +1,23 @@
+# CMake build directories and local presets
+/build/
+/cmake-build-*/
+/CMakeUserPresets.json
+/compile_commands.json
+
+# IDE state and CubeMX generation cache
+/.idea/
+/.mxproject
+
+# Compiler and linker output
+*.o
+*.obj
+*.elf
+*.map
+*.hex
+*.bin
+*.exe
+
+# Python test caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
