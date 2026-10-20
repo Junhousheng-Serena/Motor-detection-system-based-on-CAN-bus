@@ -133,7 +133,8 @@ int main(void)
   {
     Error_Handler();
   }
-  if (xTaskCreate(Can_ReceiveTask, "CanRx", 256, NULL, 2, NULL) != pdPASS)
+  if (Can_Init() != HAL_OK ||
+      xTaskCreate(Can_ReceiveTask, "CanRx", 384, NULL, 2, NULL) != pdPASS)
   {
     Error_Handler();
   }

@@ -21,7 +21,7 @@
 #include "can.h"
 
 /* USER CODE BEGIN 0 */
-
+#include "can_protocol.h"
 /* USER CODE END 0 */
 
 CAN_HandleTypeDef hcan;
@@ -54,15 +54,15 @@ void MX_CAN_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN CAN_Init 2 */
-  // 配置CAN过滤器（接收所有标准帧）
+  // 只接收上位机心跳的标准数据帧。
   CAN_FilterTypeDef filter;
   filter.FilterBank = 0;              // 过滤器组0
   filter.FilterMode = CAN_FILTERMODE_IDMASK; // 掩码模式
   filter.FilterScale = CAN_FILTERSCALE_32BIT; // 32位宽
-  filter.FilterIdHigh = 0x0000;       // 标识符高16位（标准帧：11位ID）
+  filter.FilterIdHigh = CAN_ID_HOST_HEARTBEAT << 5;
   filter.FilterIdLow = 0x0000;        // 标识符低16位
-  filter.FilterMaskIdHigh = 0x0000;   // 掩码高16位（0=不关心）
-  filter.FilterMaskIdLow = 0x0000;    // 掩码低16位
+  filter.FilterMaskIdHigh = 0x7FFU << 5;
+  filter.FilterMaskIdLow = 0x0006;    // IDE=0、RTR=0：标准数据帧
   filter.FilterFIFOAssignment = CAN_RX_FIFO0; // 接收FIFO0
   filter.FilterActivation = ENABLE;   // 使能过滤器
   filter.SlaveStartFilterBank = 14;   // 单CAN控制器，无需从机
@@ -70,15 +70,8 @@ void MX_CAN_Init(void)
     Error_Handler();
   }
 
-  // 启动CAN
-  if (HAL_CAN_Start(&hcan) != HAL_OK) {
-    Error_Handler();
-  }
-
-  // 使能接收中断
-  if (HAL_CAN_ActivateNotification(&hcan, CAN_IT_RX_FIFO0_MSG_PENDING) != HAL_OK) {
-    Error_Handler();
-  }
+  /* Start CAN and enable RX notifications in Can_ReceiveTask, after the
+   * receive queue and the FreeRTOS scheduler are ready. */
   /* USER CODE END CAN_Init 2 */
 
 }

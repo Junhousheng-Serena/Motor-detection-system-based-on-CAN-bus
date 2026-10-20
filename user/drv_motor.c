@@ -105,4 +105,13 @@ MotorProtectionState Motor_GetProtectionState(void)
   return protectionState;
 }
 
+uint8_t Motor_GetAppliedDuty(void)
+{
+  return (motorInitialized && protectionState == MOTOR_READY) ?
+      (uint8_t)requestedDutyPercent : 0U;
+}
 
+uint8_t Motor_GetRequestedDuty(void)
+{
+  return (uint8_t)requestedDutyPercent;
+}

@@ -46,6 +46,8 @@ void Motor_Stop(void);
  * Task only. */
 void Motor_UpdateProtection(float temperatureC, float currentPeakMa);
 MotorProtectionState Motor_GetProtectionState(void);
+uint8_t Motor_GetAppliedDuty(void);
+uint8_t Motor_GetRequestedDuty(void);
 
 
 #endif /* USER_DRV_MOTOR_H */
