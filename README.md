@@ -1,4 +1,11 @@
 # 基于 CAN 总线的电机检测与控制
+供电板原理图：
+<img width="2362" height="1672" alt="SCH_Schematic1_1-P1_2026-10-23" src="https://github.com/user-attachments/assets/3f5f8c49-10c7-4f6f-aaa8-d2c4520b08fb" />
+
+供电板PCB图：
+<img width="2160" height="1854" alt="PCB_PCB1_2026-10-23" src="https://github.com/user-attachments/assets/7eea61de-3c4f-4953-b501-e0c70cb4dd31" />
+
+
 
 仓库包含两个独立的 STM32 工程：F103 负责电机驱动、采样和保护，H743 负责下发控制命令及接收状态。
 
