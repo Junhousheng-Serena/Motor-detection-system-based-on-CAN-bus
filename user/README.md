@@ -18,7 +18,9 @@ CAN 接收使用 16 帧静态队列；F103 每 50 ms 上报测量与状态，每
 H743 每 50 ms 下发使能、PWM 占空比和过流停机阈值，默认使能、50%、160 mA。
 没有转速传感器，不传转速，不提供远程故障复位。
 报文和接线说明见 [CAN_PROTOCOL.md](../docs/CAN_PROTOCOL.md)，
-H743 接入文件见 [peer_h743](../peer_h743/README.md)。
+H743 代码直接维护在相邻的 `260920_completeh743/User` 工程目录，
+其接口说明见 [H743 用户模块](../../260920_completeh743/User/README.md)。
+两个工程各自使用本地的 `can_protocol.h`；更改报文格式时需同步更新两端。
 
 ## 当前硬件连接
 
@@ -172,6 +174,10 @@ CAN 驱动不创建任务；`Can_Init()` 在调度器启动前创建静态接收
 python tests/thermal/run_tests.py
 python tests/communication/run_tests.py
 ```
+
+通信测试直接编译 F103 的 `user` 和相邻 H743 工程的 `User` 源码。
+H743 工程在其他位置时使用 `--h743-project 路径`；仅有 F103 工程时，
+使用 `python tests/communication/run_tests.py --target f103` 单独测试。
 
 测试覆盖启动温度边界、过温/过流及传感器故障锁定、调速不能绕过锁定、手动停止、
 ADC 超时/错误、双通道拆分与独立滤波、电压/电流换算、单点过流与 ADC 阈值边界，
