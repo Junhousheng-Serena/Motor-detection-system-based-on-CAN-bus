@@ -24,10 +24,10 @@ with tempfile.TemporaryDirectory(prefix="f103-thermal-test-") as output:
     executable = Path(output) / "test_thermal.exe"
     subprocess.run([
         compiler, "-std=c11", "-Wall", "-Wextra", "-Werror",
-        "-I", str(test_dir / "stubs"), "-I", str(repo / "user"),
+        "-I", str(test_dir / "stubs"), "-I", str(repo / "f103/user"),
         str(test_dir / "test_thermal.c"),
-        str(repo / "user/drv_motor.c"), str(repo / "user/drv_ntc.c"),
-        str(repo / "user/drv_current.c"),
+        str(repo / "f103/user/drv_motor.c"), str(repo / "f103/user/drv_ntc.c"),
+        str(repo / "f103/user/drv_current.c"),
         "-lm", "-o", str(executable),
     ], check=True)
     for case in cases:

@@ -10,8 +10,8 @@ test_dir = Path(__file__).resolve().parent
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--target", choices=("all", "f103", "h743"), default="all")
 parser.add_argument("--h743-project", type=Path,
-                    default=repo.parent / "260920_completeh743",
-                    help="H743 project directory; defaults to the sibling project")
+                    default=repo / "h743",
+                    help="H743 project directory; defaults to this repository's h743 folder")
 args = parser.parse_args()
 compiler = shutil.which("gcc")
 if compiler is None:
@@ -28,7 +28,7 @@ targets = {
 }
 if args.target != "all":
     targets = {args.target: targets[args.target]}
-sources = {"f103": repo / "user", "h743": args.h743_project.resolve() / "User"}
+sources = {"f103": repo / "f103/user", "h743": args.h743_project.resolve() / "User"}
 for target in targets:
     for name in ("drv_can.c", "drv_can.h", "can_protocol.h"):
         if not (sources[target] / name).is_file():
@@ -49,7 +49,7 @@ with tempfile.TemporaryDirectory(prefix="motor-can-test-") as output:
         if target == "h743":
             command.append("-DTEST_H743")
         else:
-            command.append(str(repo / "user/drv_motor.c"))
+            command.append(str(repo / "f103/user/drv_motor.c"))
         subprocess.run(command + ["-lm", "-o", str(executable)], check=True)
         for case in cases:
             subprocess.run([str(executable), case], check=True)

@@ -1,12 +1,13 @@
 # CMake build directories and local presets
-/build/
-/cmake-build-*/
-/CMakeUserPresets.json
-/compile_commands.json
+build/
+cmake-build-*/
+CMakeUserPresets.json
+compile_commands.json
 
 # IDE state and CubeMX generation cache
-/.idea/
-/.mxproject
+.idea/
+.vscode/
+.mxproject
 
 # Compiler and linker output
 *.o
